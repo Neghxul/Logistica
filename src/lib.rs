@@ -1,147 +1,128 @@
 use anchor_lang::prelude::*;
 
-declare_id!("FQhE8WEQS8Z8H49CeRHtRXFPBPtQstUGTZrQx8PiXp7X");
+declare_id!("222h85kgey8WC7nbot7w8m44Y1ou6E7WZe68TsQChkX6"); 
 
 #[program]
-pub mod logistica {
+pub mod aduana_tracker {
     use super::*;
 
-    pub fn registrar_paquete(
-        context: Context<RegistrarPaquete>,
-        id_paquete: String,
-        nombre: String,
-        destino: String,
-    ) -> Result<()> {
-        let paquete = &mut context.accounts.paquete;
-        let gerente = &context.accounts.gerente;
-
-        paquete.gerente = gerente.key();
-        paquete.id_paquete = id_paquete;
-        paquete.nombre = nombre;
-        paquete.estado = String::from("En Almacén");
-        paquete.destino = destino;
-
-        msg!(
-            "Paquete {} registrado correctamente. Destino: {}",
-            paquete.nombre,
-            paquete.destino
-        );
+    pub fn crear_almacen(ctx: Context<CrearAlmacen>, id_almacen: String, nombre: String, ubicacion: String) -> Result<()> {
+        let almacen = &mut ctx.accounts.almacen;
+        almacen.gerente = ctx.accounts.gerente.key();
+        almacen.id_almacen = id_almacen;
+        almacen.nombre = nombre;
+        almacen.ubicacion = ubicacion;
+        msg!("🏢 Almacén registrado: {}", almacen.nombre);
         Ok(())
     }
 
-    pub fn actualizar_estado(
-        context: Context<ModificarPaquete>,
-        id_paquete: String,
-        nuevo_estado: String,
-    ) -> Result<()> {
-        let paquete = &mut context.accounts.paquete;
+    pub fn registrar_producto(ctx: Context<RegistrarProducto>, sku: String, nombre: String, pedimento: String) -> Result<()> {
+        let producto = &mut ctx.accounts.producto;
+        let almacen = &ctx.accounts.almacen;
 
-        require!(
-            paquete.gerente == context.accounts.gerente.key(),
-            Errores::NoEresElGerente
-        );
-
-        paquete.estado = nuevo_estado.clone();
-
-        msg!(
-            "Estado del paquete {} actualizado a: {}",
-            paquete.id_paquete,
-            nuevo_estado
-        );
+        producto.gerente = ctx.accounts.gerente.key();
+        producto.almacen_vinculado = almacen.key(); 
+        producto.sku = sku;
+        producto.nombre = nombre;
+        producto.cantidad = 0; 
+        producto.pedimento = pedimento;
+        msg!("📦 Producto {} vinculado al almacén", producto.sku);
         Ok(())
     }
 
-    pub fn eliminar_paquete(context: Context<ModificarPaquete>, id_paquete: String) -> Result<()> {
-        let paquete = &context.accounts.paquete;
-
-        require!(
-            paquete.gerente == context.accounts.gerente.key(),
-            Errores::NoEresElGerente
-        );
-
-        msg!(
-            "El registro del paquete {} ha sido eliminado.",
-            paquete.id_paquete
-        );
+    pub fn registrar_entrada(ctx: Context<ManejarInventario>, _sku: String, cantidad: u64) -> Result<()> {
+        let producto = &mut ctx.accounts.producto;
+        producto.cantidad = producto.cantidad.checked_add(cantidad).unwrap();
+        msg!("📥 Entrada exitosa. Stock actual: {}", producto.cantidad);
         Ok(())
     }
 
-    pub fn alternar_estado(context: Context<ModificarPaquete>) -> Result<()> {
-        let paquete = &mut context.accounts.paquete;
+    pub fn registrar_salida(ctx: Context<ManejarInventario>, _sku: String, cantidad: u64) -> Result<()> {
+        let producto = &mut ctx.accounts.producto;
+        require!(producto.cantidad >= cantidad, Errores::StockInsuficiente);
+        producto.cantidad = producto.cantidad.checked_sub(cantidad).unwrap();
+        msg!("📤 Salida exitosa. Stock restante: {}", producto.cantidad);
+        Ok(())
+    }
 
-        require!(
-            paquete.gerente == context.accounts.gerente.key(),
-            Errores::NoEresElGerente
-        );
-
-        if paquete.estado == "En Tránsito" {
-            paquete.estado = String::from("Entregado");
-        } else {
-            paquete.estado = String::from("En Tránsito");
-        }
-
-        msg!(
-            "El estado del paquete {} ha cambiado a: {}",
-            paquete.id_paquete,
-            paquete.estado
-        );
+    pub fn eliminar_producto(ctx: Context<EliminarProducto>, _sku: String) -> Result<()> {
+        let producto = &ctx.accounts.producto;
+        require!(producto.cantidad == 0, Errores::NoSePuedeBorrarConStock);
+        msg!("🗑️ El registro del SKU {} ha sido eliminado del sistema.", producto.sku);
         Ok(())
     }
 }
 
 #[error_code]
 pub enum Errores {
-    #[msg("Error: Solo el gerente que registró este paquete puede modificarlo.")]
-    NoEresElGerente,
+    #[msg("Error: No hay stock suficiente para esta salida.")]
+    StockInsuficiente,
+    #[msg("Error: No puedes eliminar un registro que aún tiene inventario.")]
+    NoSePuedeBorrarConStock,
 }
 
 #[account]
 #[derive(InitSpace)]
-pub struct PaqueteInventario {
+pub struct Almacen {
     pub gerente: Pubkey,
-
     #[max_len(20)]
-    pub id_paquete: String,
-
+    pub id_almacen: String,
     #[max_len(50)]
     pub nombre: String,
-
-    #[max_len(20)]
-    pub estado: String,
-
     #[max_len(100)]
-    pub destino: String,
+    pub ubicacion: String,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct Producto {
+    pub gerente: Pubkey,
+    pub almacen_vinculado: Pubkey, 
+    #[max_len(20)]
+    pub sku: String,
+    #[max_len(50)]
+    pub nombre: String,
+    pub cantidad: u64,
+    #[max_len(50)]
+    pub pedimento: String,
 }
 
 #[derive(Accounts)]
-#[instruction(id_paquete: String)]
-pub struct RegistrarPaquete<'info> {
+#[instruction(id_almacen: String)]
+pub struct CrearAlmacen<'info> {
     #[account(mut)]
     pub gerente: Signer<'info>,
-
-    #[account(
-        init, 
-        payer = gerente, 
-        space = PaqueteInventario::INIT_SPACE + 8,
-        seeds = [b"paquete", gerente.key().as_ref(), id_paquete.as_bytes()], 
-        bump 
-    )]
-    pub paquete: Account<'info, PaqueteInventario>,
-
+    #[account(init, payer = gerente, space = 8 + Almacen::INIT_SPACE, seeds = [b"almacen", gerente.key().as_ref(), id_almacen.as_bytes()], bump)]
+    pub almacen: Account<'info, Almacen>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-#[instruction(id_paquete: String)]
-pub struct ModificarPaquete<'info> {
+#[instruction(sku: String)]
+pub struct RegistrarProducto<'info> {
     #[account(mut)]
     pub gerente: Signer<'info>,
+    #[account(seeds = [b"almacen", gerente.key().as_ref(), almacen.id_almacen.as_bytes()], bump, has_one = gerente)]
+    pub almacen: Account<'info, Almacen>,
+    #[account(init, payer = gerente, space = 8 + Producto::INIT_SPACE, seeds = [b"producto", gerente.key().as_ref(), sku.as_bytes()], bump)]
+    pub producto: Account<'info, Producto>,
+    pub system_program: Program<'info, System>,
+}
 
-    #[account(
-        mut,
-        seeds = [b"paquete", gerente.key().as_ref(), id_paquete.as_bytes()], 
-        bump,
-        close = gerente
-    )]
-    pub paquete: Account<'info, PaqueteInventario>,
+#[derive(Accounts)]
+#[instruction(sku: String)]
+pub struct ManejarInventario<'info> {
+    #[account(mut)]
+    pub gerente: Signer<'info>,
+    #[account(mut, seeds = [b"producto", gerente.key().as_ref(), sku.as_bytes()], bump, has_one = gerente)]
+    pub producto: Account<'info, Producto>,
+}
+
+#[derive(Accounts)]
+#[instruction(sku: String)]
+pub struct EliminarProducto<'info> {
+    #[account(mut)]
+    pub gerente: Signer<'info>,
+    #[account(mut, seeds = [b"producto", gerente.key().as_ref(), sku.as_bytes()], bump, has_one = gerente, close = gerente)]
+    pub producto: Account<'info, Producto>,
 }
