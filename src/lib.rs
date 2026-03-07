@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
 
-declare_id!("");
+declare_id!("FQhE8WEQS8Z8H49CeRHtRXFPBPtQstUGTZrQx8PiXp7X");
 
 #[program]
-pub mod chain_logistics {
+pub mod logistica {
     use super::*;
 
     pub fn registrar_paquete(
@@ -22,7 +22,7 @@ pub mod chain_logistics {
         paquete.destino = destino;
 
         msg!(
-            "📦 Paquete {} registrado correctamente. Destino: {}",
+            "Paquete {} registrado correctamente. Destino: {}",
             paquete.nombre,
             paquete.destino
         );
@@ -51,10 +51,7 @@ pub mod chain_logistics {
         Ok(())
     }
 
-    pub fn eliminar_paquete(
-        context: Context<ModificarPaquete>,
-        id_paquete: String,
-    ) -> Result<()> {
+    pub fn eliminar_paquete(context: Context<ModificarPaquete>, id_paquete: String) -> Result<()> {
         let paquete = &context.accounts.paquete;
 
         require!(
@@ -63,8 +60,30 @@ pub mod chain_logistics {
         );
 
         msg!(
-            "🗑️ El registro del paquete {} ha sido eliminado.",
+            "El registro del paquete {} ha sido eliminado.",
             paquete.id_paquete
+        );
+        Ok(())
+    }
+
+    pub fn alternar_estado(context: Context<ModificarPaquete>) -> Result<()> {
+        let paquete = &mut context.accounts.paquete;
+
+        require!(
+            paquete.gerente == context.accounts.gerente.key(),
+            Errores::NoEresElGerente
+        );
+
+        if paquete.estado == "En Tránsito" {
+            paquete.estado = String::from("Entregado");
+        } else {
+            paquete.estado = String::from("En Tránsito");
+        }
+
+        msg!(
+            "El estado del paquete {} ha cambiado a: {}",
+            paquete.id_paquete,
+            paquete.estado
         );
         Ok(())
     }
@@ -76,6 +95,7 @@ pub enum Errores {
     NoEresElGerente,
 }
 
+#[account]
 #[derive(InitSpace)]
 pub struct PaqueteInventario {
     pub gerente: Pubkey,
