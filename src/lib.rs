@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("222h85kgey8WC7nbot7w8m44Y1ou6E7WZe68TsQChkX6"); 
+declare_id!("GEZJ9bwD1WFG3f9wjkj2x5xZ2rmGT5AsGYP67wV4dePb"); 
 
 #[program]
 pub mod aduana_tracker {
@@ -12,7 +12,7 @@ pub mod aduana_tracker {
         almacen.id_almacen = id_almacen;
         almacen.nombre = nombre;
         almacen.ubicacion = ubicacion;
-        msg!("🏢 Almacén registrado: {}", almacen.nombre);
+        msg!("Almacén registrado: {}", almacen.nombre);
         Ok(())
     }
 
@@ -26,14 +26,33 @@ pub mod aduana_tracker {
         producto.nombre = nombre;
         producto.cantidad = 0; 
         producto.pedimento = pedimento;
-        msg!("📦 Producto {} vinculado al almacén", producto.sku);
+        msg!("Producto {} vinculado al almacén", producto.sku);
         Ok(())
     }
 
     pub fn registrar_entrada(ctx: Context<ManejarInventario>, _sku: String, cantidad: u64) -> Result<()> {
         let producto = &mut ctx.accounts.producto;
         producto.cantidad = producto.cantidad.checked_add(cantidad).unwrap();
-        msg!("📥 Entrada exitosa. Stock actual: {}", producto.cantidad);
+        msg!("Entrada exitosa. Stock actual: {}", producto.cantidad);
+        Ok(())
+    }
+
+    pub fn despachar_pedido(ctx: Context<DespacharPedido>, orden_trabajo: String, cliente: String, cantidad: u64) -> Result<()> {
+        let producto = &mut ctx.accounts.producto;
+        let pedido = &mut ctx.accounts.pedido;
+
+        require!(producto.cantidad >= cantidad, Errores::StockInsuficiente);
+        
+        producto.cantidad = producto.cantidad.checked_sub(cantidad).unwrap();
+
+        pedido.gerente = ctx.accounts.gerente.key();
+        pedido.producto_vinculado = producto.key();
+        pedido.orden_trabajo = orden_trabajo;
+        pedido.cliente = cliente;
+        pedido.cantidad_despachada = cantidad;
+        pedido.fecha_timestamp = Clock::get()?.unix_timestamp;
+
+        msg!("Pedido {} despachado a {}. Unidades: {}", pedido.orden_trabajo, pedido.cliente, cantidad);
         Ok(())
     }
 
@@ -41,23 +60,23 @@ pub mod aduana_tracker {
         let producto = &mut ctx.accounts.producto;
         require!(producto.cantidad >= cantidad, Errores::StockInsuficiente);
         producto.cantidad = producto.cantidad.checked_sub(cantidad).unwrap();
-        msg!("📤 Salida exitosa. Stock restante: {}", producto.cantidad);
+        msg!("Ajuste de salida exitoso. Stock restante: {}", producto.cantidad);
         Ok(())
     }
 
     pub fn eliminar_producto(ctx: Context<EliminarProducto>, _sku: String) -> Result<()> {
         let producto = &ctx.accounts.producto;
         require!(producto.cantidad == 0, Errores::NoSePuedeBorrarConStock);
-        msg!("🗑️ El registro del SKU {} ha sido eliminado del sistema.", producto.sku);
+        msg!("El registro del SKU {} ha sido eliminado del sistema.", producto.sku);
         Ok(())
     }
 }
 
 #[error_code]
 pub enum Errores {
-    #[msg("Error: No hay stock suficiente para esta salida.")]
+    #[msg("Error: No hay stock suficiente para esta salida o pedido.")]
     StockInsuficiente,
-    #[msg("Error: No puedes eliminar un registro que aún tiene inventario.")]
+    #[msg("Error: No puedes eliminar un registro que aún tiene inventario físico.")]
     NoSePuedeBorrarConStock,
 }
 
@@ -85,6 +104,19 @@ pub struct Producto {
     pub cantidad: u64,
     #[max_len(50)]
     pub pedimento: String,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct Pedido {
+    pub gerente: Pubkey,
+    pub producto_vinculado: Pubkey,
+    #[max_len(30)]
+    pub orden_trabajo: String,
+    #[max_len(50)]
+    pub cliente: String,
+    pub cantidad_despachada: u64,
+    pub fecha_timestamp: i64,
 }
 
 #[derive(Accounts)]
@@ -116,6 +148,18 @@ pub struct ManejarInventario<'info> {
     pub gerente: Signer<'info>,
     #[account(mut, seeds = [b"producto", gerente.key().as_ref(), sku.as_bytes()], bump, has_one = gerente)]
     pub producto: Account<'info, Producto>,
+}
+
+#[derive(Accounts)]
+#[instruction(orden_trabajo: String)]
+pub struct DespacharPedido<'info> {
+    #[account(mut)]
+    pub gerente: Signer<'info>,
+    #[account(mut, seeds = [b"producto", gerente.key().as_ref(), producto.sku.as_bytes()], bump, has_one = gerente)]
+    pub producto: Account<'info, Producto>,
+    #[account(init, payer = gerente, space = 8 + Pedido::INIT_SPACE, seeds = [b"pedido", gerente.key().as_ref(), orden_trabajo.as_bytes()], bump)]
+    pub pedido: Account<'info, Pedido>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
